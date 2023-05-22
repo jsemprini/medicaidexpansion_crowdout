@@ -1,24 +1,24 @@
-****Jason Semprini - 
+****Jason Semprini - Medicaid Expansions and Private Insurance ‘Crowd-Out’ (1999-2019) - Published 5/22/2023****
+
 clear all
 
 set seed 123
 
-cd "C:\Users\jsemprini\OneDrive - University of Iowa\4-Misc Projects\j-Staggered_HMP\results"
+***Set working directory***
 
-set more off
-  quietly log
-  local logon = r(status)
-  if "`logon'" == "on" { 
-	log close 
-	}
-log using hmp_stagger-manuscript2, replace text
 
-use "C:\Users\jsemprini\OneDrive - University of Iowa\4-Misc Projects\j-Staggered_HMP\raw\stata-state-1999-2019.dta"
+use stata-state-1999-2019.dta
 
+***create numeric state code (pseudo-statefips)***
 egen statefips=group(state)
 
+***Create binary, time-variant indicator for expansion in year t, for state s***
 gen expand=0
+
+***create expansion cohort id***
 gen id=0
+
+***create variable indicating expansion year***
 gen first_tx=0
 
 replace expand=1 if state=="New York" | state=="Vermont" | state=="Delaware"
@@ -81,7 +81,9 @@ rename (rateMedicaid rateMedicare ratePrivate ratePublic rateUninsured) (Medicai
 
 order state year statefips expand Uninsured Medicaid Medicare Public Private id
 
-foreach y in Uninsured Medicaid Medicare Private    {
+
+***plot means by expansion cohort***
+foreach y in Private    {
 	
 reg `y' i.year#i.id
 margins year#id
@@ -93,9 +95,9 @@ graph export p1_`y'.png, replace
 xtset statefips year
 
 
-*1-naieve twfe*
+*1-naive twfe*
 estimates clear
-foreach y in Uninsured Medicaid Medicare Private{
+foreach y in Private{
 	eststo: xtreg `y' i.expand i.year , vce(cluster statefips) fe
 }
 
@@ -103,7 +105,7 @@ foreach y in Uninsured Medicaid Medicare Private{
 
 *2-Decomp*
 *REQUIRES: ssc install bacondecomp
-foreach y in Uninsured Medicaid Medicare Private{
+foreach y in Private{
 	bacondecomp `y' expand, ddetail vce(cluster statefips) 
 	estimates store bd_`y'
 graph save bd_`y'.gph , replace
@@ -112,10 +114,9 @@ graph export bd_`y'.png, replace
 
 
 ***modern twfe***
-
 *3-Chaisemartin*
 *REQUIRES: ssc install did_multiplegt - can include controls
-foreach y in Uninsured Medicaid Medicare Private{
+foreach y in Private{
 	
 
 	did_multiplegt `y' statefips year expand , robust_dynamic cluster(statefips) dynamic(5) placebo(5) save_results(Chaise_`y') breps(999)
@@ -129,7 +130,7 @@ foreach y in Uninsured Medicaid Medicare Private{
 *REQUIRES ssc install csdid, drdid - can include controls*
 **CANNOT CLUSTER SE's in default / can implement wild bootstrap and cluster SEs with additional packages***
 
-foreach y in Uninsured Medicaid Medicare Private{
+foreach y in Private{
 	eststo: csdid `y' expand , ivar(statefips) time(year) gvar(first_tx) method(reg) agg(simple)
 	estat pretrend
 	estadd scalar ptt=r(pchi2)
@@ -145,31 +146,10 @@ foreach x in  calendar group event{
 
 
 
-
-
-*5-2SDD (requires ssc install did2s) - can include controls
-foreach y in Uninsured Medicaid Medicare Private{
-	
-	eststo: did2s `y' , first_stage(i.statefips i.year) second_stage(i.expand) treatment(expand) cluster(statefips)
-	
-}
-
-
-*7=8-Matrix Completion (requires ssc install did_imputation)
+*5-Matrix Completion (requires ssc install did_imputation)
 replace first_tx=. if first_tx==0
-foreach y in Uninsured Medicaid Medicare Private{
+foreach y in Private{
 eststo: did_imputation `y' statefips year first_tx , cluster(statefips) autosample pretrend(5)
 
 }
 
-
-*9 - AVOID STAGGER - DROP ALWAYS, EARLY, LATE TREATED GROUPS*
-replace first_tx=0 if first_tx==.
-
-foreach y in Uninsured Medicaid Medicare Private{
-
-eststo: xtreg `y' i.expand i.year if first_tx==2014 | first_tx==0 , vce(cluster statefips) fe
-
-}
-
-esttab using estimates_private.csv, replace b(3) se(3) sca(ptt)  star(* .1 ** .05 *** .01 **** .001)
